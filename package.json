@@ -1,0 +1,21 @@
+{
+  "name": "new-models",
+  "version": "1.0.0",
+  "description": "New Models Artist Edition Contracts",
+  "main": "",
+  "directories": {
+    "test": "test"
+  },
+  "devDependencies": {},
+  "dependencies": {
+    "dotenv": "^5.0.1",
+    "truffle-hdwallet-provider": "^0.0.5",
+    "zeppelin-solidity": "^1.9.0"
+  },
+  "scripts": {
+    "test": "truffle test test/NewModels.test.js"
+  },
+  "keywords": ["ethereum", "art", "nft", "publication"],
+  "author": "Billy Rennekamp <billy.rennekamp@gmail.com>",
+  "license": "ISC"
+}
