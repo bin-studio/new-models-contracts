@@ -13,7 +13,7 @@ contract Metadata {
     function Metadata () public {}
 
     function tokenURI(uint _tokenId) public view returns (string _infoUrl) {
-        string memory base = "https://badge.newmodels.io/metadata/0x";
+        string memory base = "https://patch.newmodels.io/metadata/0x";
         string memory id = uint2hexstr(_tokenId);
         string memory suffix = ".json";
         return base.toSlice().concat(id.toSlice()).toSlice().concat(suffix.toSlice());

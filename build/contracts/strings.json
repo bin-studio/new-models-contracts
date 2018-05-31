@@ -1,8 +1,8 @@
 {
   "contractName": "strings",
   "abi": [],
-  "bytecode": "0x604c602c600b82828239805160001a60731460008114601c57601e565bfe5b5030600052607381538281f30073000000000000000000000000000000000000000030146060604052600080fd00a165627a7a7230582095b13a9a2b989d65572075c78b5f73af846e6935333d106ec441264cb3c2b0290029",
-  "deployedBytecode": "0x73000000000000000000000000000000000000000030146060604052600080fd00a165627a7a7230582095b13a9a2b989d65572075c78b5f73af846e6935333d106ec441264cb3c2b0290029",
+  "bytecode": "0x604c602c600b82828239805160001a60731460008114601c57601e565bfe5b5030600052607381538281f30073000000000000000000000000000000000000000030146080604052600080fd00a165627a7a723058201a9cf7fe62424e5ab6be361218afde1117d2652d300d5f2fdf032f61333a816d0029",
+  "deployedBytecode": "0x73000000000000000000000000000000000000000030146080604052600080fd00a165627a7a723058201a9cf7fe62424e5ab6be361218afde1117d2652d300d5f2fdf032f61333a816d0029",
   "sourceMap": "2004:22807:5:-;;132:2:-1;166:7;155:9;146:7;137:37;252:7;246:14;243:1;238:23;232:4;229:33;270:1;265:20;;;;222:63;;265:20;274:9;222:63;;298:9;295:1;288:20;328:4;319:7;311:22;352:7;343;336:24",
   "deployedSourceMap": "2004:22807:5:-;;;;;;;;",
   "source": "/*\n * @title String & slice utility library for Solidity contracts.\n * @author Nick Johnson <arachnid@notdot.net>\n *\n * @dev Functionality in this library is largely implemented using an\n *      abstraction called a 'slice'. A slice represents a part of a string -\n *      anything from the entire string to a single character, or even no\n *      characters at all (a 0-length slice). Since a slice only has to specify\n *      an offset and a length, copying and manipulating slices is a lot less\n *      expensive than copying and manipulating the strings they reference.\n *\n *      To further reduce gas costs, most functions on slice that need to return\n *      a slice modify the original one instead of allocating a new one; for\n *      instance, `s.split(\".\")` will return the text up to the first '.',\n *      modifying s to only contain the remainder of the string after the '.'.\n *      In situations where you do not want to modify the original slice, you\n *      can make a copy first with `.copy()`, for example:\n *      `s.copy().split(\".\")`. Try and avoid using this idiom in loops; since\n *      Solidity has no memory management, it will result in allocating many\n *      short-lived slices that are later discarded.\n *\n *      Functions that return two slices come in two versions: a non-allocating\n *      version that takes the second slice as an argument, modifying it in\n *      place, and an allocating version that allocates and returns the second\n *      slice; see `nextRune` for example.\n *\n *      Functions that have to copy string data will return strings rather than\n *      slices; these can be cast back to slices for further processing if\n *      required.\n *\n *      For convenience, some functions are provided with non-modifying\n *      variants that create a new slice and return both; for instance,\n *      `s.splitNew('.')` leaves s unmodified, and returns two values\n *      corresponding to the left and right parts of the string.\n */\n \npragma solidity ^0.4.14;\n\nlibrary strings {\n    struct slice {\n        uint _len;\n        uint _ptr;\n    }\n\n    function memcpy(uint dest, uint src, uint len) private {\n        // Copy word-length chunks while possible\n        for(; len >= 32; len -= 32) {\n            assembly {\n                mstore(dest, mload(src))\n            }\n            dest += 32;\n            src += 32;\n        }\n\n        // Copy remaining bytes\n        uint mask = 256 ** (32 - len) - 1;\n        assembly {\n            let srcpart := and(mload(src), not(mask))\n            let destpart := and(mload(dest), mask)\n            mstore(dest, or(destpart, srcpart))\n        }\n    }\n\n    /*\n     * @dev Returns a slice containing the entire string.\n     * @param self The string to make a slice from.\n     * @return A newly allocated slice containing the entire string.\n     */\n    function toSlice(string self) internal returns (slice) {\n        uint ptr;\n        assembly {\n            ptr := add(self, 0x20)\n        }\n        return slice(bytes(self).length, ptr);\n    }\n\n    /*\n     * @dev Returns the length of a null-terminated bytes32 string.\n     * @param self The value to find the length of.\n     * @return The length of the string, from 0 to 32.\n     */\n    function len(bytes32 self) internal returns (uint) {\n        uint ret;\n        if (self == 0)\n            return 0;\n        if (self & 0xffffffffffffffffffffffffffffffff == 0) {\n            ret += 16;\n            self = bytes32(uint(self) / 0x100000000000000000000000000000000);\n        }\n        if (self & 0xffffffffffffffff == 0) {\n            ret += 8;\n            self = bytes32(uint(self) / 0x10000000000000000);\n        }\n        if (self & 0xffffffff == 0) {\n            ret += 4;\n            self = bytes32(uint(self) / 0x100000000);\n        }\n        if (self & 0xffff == 0) {\n            ret += 2;\n            self = bytes32(uint(self) / 0x10000);\n        }\n        if (self & 0xff == 0) {\n            ret += 1;\n        }\n        return 32 - ret;\n    }\n\n    /*\n     * @dev Returns a slice containing the entire bytes32, interpreted as a\n     *      null-termintaed utf-8 string.\n     * @param self The bytes32 value to convert to a slice.\n     * @return A new slice containing the value of the input argument up to the\n     *         first null.\n     */\n    function toSliceB32(bytes32 self) internal returns (slice ret) {\n        // Allocate space for `self` in memory, copy it there, and point ret at it\n        assembly {\n            let ptr := mload(0x40)\n            mstore(0x40, add(ptr, 0x20))\n            mstore(ptr, self)\n            mstore(add(ret, 0x20), ptr)\n        }\n        ret._len = len(self);\n    }\n\n    /*\n     * @dev Returns a new slice containing the same data as the current slice.\n     * @param self The slice to copy.\n     * @return A new slice containing the same data as `self`.\n     */\n    function copy(slice self) internal returns (slice) {\n        return slice(self._len, self._ptr);\n    }\n\n    /*\n     * @dev Copies a slice to a new string.\n     * @param self The slice to copy.\n     * @return A newly allocated string containing the slice's text.\n     */\n    function toString(slice self) internal returns (string) {\n        var ret = new string(self._len);\n        uint retptr;\n        assembly { retptr := add(ret, 32) }\n\n        memcpy(retptr, self._ptr, self._len);\n        return ret;\n    }\n\n    /*\n     * @dev Returns the length in runes of the slice. Note that this operation\n     *      takes time proportional to the length of the slice; avoid using it\n     *      in loops, and call `slice.empty()` if you only need to know whether\n     *      the slice is empty or not.\n     * @param self The slice to operate on.\n     * @return The length of the slice in runes.\n     */\n    function len(slice self) internal returns (uint l) {\n        // Starting at ptr-31 means the LSB will be the byte we care about\n        var ptr = self._ptr - 31;\n        var end = ptr + self._len;\n        for (l = 0; ptr < end; l++) {\n            uint8 b;\n            assembly { b := and(mload(ptr), 0xFF) }\n            if (b < 0x80) {\n                ptr += 1;\n            } else if(b < 0xE0) {\n                ptr += 2;\n            } else if(b < 0xF0) {\n                ptr += 3;\n            } else if(b < 0xF8) {\n                ptr += 4;\n            } else if(b < 0xFC) {\n                ptr += 5;\n            } else {\n                ptr += 6;\n            }\n        }\n    }\n\n    /*\n     * @dev Returns true if the slice is empty (has a length of 0).\n     * @param self The slice to operate on.\n     * @return True if the slice is empty, False otherwise.\n     */\n    function empty(slice self) internal returns (bool) {\n        return self._len == 0;\n    }\n\n    /*\n     * @dev Returns a positive number if `other` comes lexicographically after\n     *      `self`, a negative number if it comes before, or zero if the\n     *      contents of the two slices are equal. Comparison is done per-rune,\n     *      on unicode codepoints.\n     * @param self The first slice to compare.\n     * @param other The second slice to compare.\n     * @return The result of the comparison.\n     */\n    function compare(slice self, slice other) internal returns (int) {\n        uint shortest = self._len;\n        if (other._len < self._len)\n            shortest = other._len;\n\n        var selfptr = self._ptr;\n        var otherptr = other._ptr;\n        for (uint idx = 0; idx < shortest; idx += 32) {\n            uint a;\n            uint b;\n            assembly {\n                a := mload(selfptr)\n                b := mload(otherptr)\n            }\n            if (a != b) {\n                // Mask out irrelevant bytes and check again\n                uint mask = ~(2 ** (8 * (32 - shortest + idx)) - 1);\n                var diff = (a & mask) - (b & mask);\n                if (diff != 0)\n                    return int(diff);\n            }\n            selfptr += 32;\n            otherptr += 32;\n        }\n        return int(self._len) - int(other._len);\n    }\n\n    /*\n     * @dev Returns true if the two slices contain the same text.\n     * @param self The first slice to compare.\n     * @param self The second slice to compare.\n     * @return True if the slices are equal, false otherwise.\n     */\n    function equals(slice self, slice other) internal returns (bool) {\n        return compare(self, other) == 0;\n    }\n\n    /*\n     * @dev Extracts the first rune in the slice into `rune`, advancing the\n     *      slice to point to the next rune and returning `self`.\n     * @param self The slice to operate on.\n     * @param rune The slice that will contain the first rune.\n     * @return `rune`.\n     */\n    function nextRune(slice self, slice rune) internal returns (slice) {\n        rune._ptr = self._ptr;\n\n        if (self._len == 0) {\n            rune._len = 0;\n            return rune;\n        }\n\n        uint leng;\n        uint b;\n        // Load the first byte of the rune into the LSBs of b\n        assembly { b := and(mload(sub(mload(add(self, 32)), 31)), 0xFF) }\n        if (b < 0x80) {\n            leng = 1;\n        } else if(b < 0xE0) {\n            leng = 2;\n        } else if(b < 0xF0) {\n            leng = 3;\n        } else {\n            leng = 4;\n        }\n\n        // Check for truncated codepoints\n        if (leng > self._len) {\n            rune._len = self._len;\n            self._ptr += self._len;\n            self._len = 0;\n            return rune;\n        }\n\n        self._ptr += leng;\n        self._len -= leng;\n        rune._len = leng;\n        return rune;\n    }\n\n    /*\n     * @dev Returns the first rune in the slice, advancing the slice to point\n     *      to the next rune.\n     * @param self The slice to operate on.\n     * @return A slice containing only the first rune from `self`.\n     */\n    function nextRune(slice self) internal returns (slice ret) {\n        nextRune(self, ret);\n    }\n\n    /*\n     * @dev Returns the number of the first codepoint in the slice.\n     * @param self The slice to operate on.\n     * @return The number of the first codepoint in the slice.\n     */\n    function ord(slice self) internal returns (uint ret) {\n        if (self._len == 0) {\n            return 0;\n        }\n\n        uint word;\n        uint length;\n        uint divisor = 2 ** 248;\n\n        // Load the rune into the MSBs of b\n        assembly { word:= mload(mload(add(self, 32))) }\n        var b = word / divisor;\n        if (b < 0x80) {\n            ret = b;\n            length = 1;\n        } else if(b < 0xE0) {\n            ret = b & 0x1F;\n            length = 2;\n        } else if(b < 0xF0) {\n            ret = b & 0x0F;\n            length = 3;\n        } else {\n            ret = b & 0x07;\n            length = 4;\n        }\n\n        // Check for truncated codepoints\n        if (length > self._len) {\n            return 0;\n        }\n\n        for (uint i = 1; i < length; i++) {\n            divisor = divisor / 256;\n            b = (word / divisor) & 0xFF;\n            if (b & 0xC0 != 0x80) {\n                // Invalid UTF-8 sequence\n                return 0;\n            }\n            ret = (ret * 64) | (b & 0x3F);\n        }\n\n        return ret;\n    }\n\n    /*\n     * @dev Returns the keccak-256 hash of the slice.\n     * @param self The slice to hash.\n     * @return The hash of the slice.\n     */\n    function keccak(slice self) internal returns (bytes32 ret) {\n        assembly {\n            ret := keccak256(mload(add(self, 32)), mload(self))\n        }\n    }\n\n    /*\n     * @dev Returns true if `self` starts with `needle`.\n     * @param self The slice to operate on.\n     * @param needle The slice to search for.\n     * @return True if the slice starts with the provided text, false otherwise.\n     */\n    function startsWith(slice self, slice needle) internal returns (bool) {\n        if (self._len < needle._len) {\n            return false;\n        }\n\n        if (self._ptr == needle._ptr) {\n            return true;\n        }\n\n        bool equal;\n        assembly {\n            let length := mload(needle)\n            let selfptr := mload(add(self, 0x20))\n            let needleptr := mload(add(needle, 0x20))\n            equal := eq(keccak256(selfptr, length), keccak256(needleptr, length))\n        }\n        return equal;\n    }\n\n    /*\n     * @dev If `self` starts with `needle`, `needle` is removed from the\n     *      beginning of `self`. Otherwise, `self` is unmodified.\n     * @param self The slice to operate on.\n     * @param needle The slice to search for.\n     * @return `self`\n     */\n    function beyond(slice self, slice needle) internal returns (slice) {\n        if (self._len < needle._len) {\n            return self;\n        }\n\n        bool equal = true;\n        if (self._ptr != needle._ptr) {\n            assembly {\n                let length := mload(needle)\n                let selfptr := mload(add(self, 0x20))\n                let needleptr := mload(add(needle, 0x20))\n                equal := eq(sha3(selfptr, length), sha3(needleptr, length))\n            }\n        }\n\n        if (equal) {\n            self._len -= needle._len;\n            self._ptr += needle._len;\n        }\n\n        return self;\n    }\n\n    /*\n     * @dev Returns true if the slice ends with `needle`.\n     * @param self The slice to operate on.\n     * @param needle The slice to search for.\n     * @return True if the slice starts with the provided text, false otherwise.\n     */\n    function endsWith(slice self, slice needle) internal returns (bool) {\n        if (self._len < needle._len) {\n            return false;\n        }\n\n        var selfptr = self._ptr + self._len - needle._len;\n\n        if (selfptr == needle._ptr) {\n            return true;\n        }\n\n        bool equal;\n        assembly {\n            let length := mload(needle)\n            let needleptr := mload(add(needle, 0x20))\n            equal := eq(keccak256(selfptr, length), keccak256(needleptr, length))\n        }\n\n        return equal;\n    }\n\n    /*\n     * @dev If `self` ends with `needle`, `needle` is removed from the\n     *      end of `self`. Otherwise, `self` is unmodified.\n     * @param self The slice to operate on.\n     * @param needle The slice to search for.\n     * @return `self`\n     */\n    function until(slice self, slice needle) internal returns (slice) {\n        if (self._len < needle._len) {\n            return self;\n        }\n\n        var selfptr = self._ptr + self._len - needle._len;\n        bool equal = true;\n        if (selfptr != needle._ptr) {\n            assembly {\n                let length := mload(needle)\n                let needleptr := mload(add(needle, 0x20))\n                equal := eq(keccak256(selfptr, length), keccak256(needleptr, length))\n            }\n        }\n\n        if (equal) {\n            self._len -= needle._len;\n        }\n\n        return self;\n    }\n\n    // Returns the memory address of the first byte of the first occurrence of\n    // `needle` in `self`, or the first byte after `self` if not found.\n    function findPtr(uint selflen, uint selfptr, uint needlelen, uint needleptr) private returns (uint) {\n        uint ptr;\n        uint idx;\n\n        if (needlelen <= selflen) {\n            if (needlelen <= 32) {\n                // Optimized assembly for 68 gas per byte on short strings\n                assembly {\n                    let mask := not(sub(exp(2, mul(8, sub(32, needlelen))), 1))\n                    let needledata := and(mload(needleptr), mask)\n                    let end := add(selfptr, sub(selflen, needlelen))\n                    ptr := selfptr\n                    loop:\n                    jumpi(exit, eq(and(mload(ptr), mask), needledata))\n                    ptr := add(ptr, 1)\n                    jumpi(loop, lt(sub(ptr, 1), end))\n                    ptr := add(selfptr, selflen)\n                    exit:\n                }\n                return ptr;\n            } else {\n                // For long needles, use hashing\n                bytes32 hash;\n                assembly { hash := sha3(needleptr, needlelen) }\n                ptr = selfptr;\n                for (idx = 0; idx <= selflen - needlelen; idx++) {\n                    bytes32 testHash;\n                    assembly { testHash := sha3(ptr, needlelen) }\n                    if (hash == testHash)\n                        return ptr;\n                    ptr += 1;\n                }\n            }\n        }\n        return selfptr + selflen;\n    }\n\n    // Returns the memory address of the first byte after the last occurrence of\n    // `needle` in `self`, or the address of `self` if not found.\n    function rfindPtr(uint selflen, uint selfptr, uint needlelen, uint needleptr) private returns (uint) {\n        uint ptr;\n\n        if (needlelen <= selflen) {\n            if (needlelen <= 32) {\n                // Optimized assembly for 69 gas per byte on short strings\n                assembly {\n                    let mask := not(sub(exp(2, mul(8, sub(32, needlelen))), 1))\n                    let needledata := and(mload(needleptr), mask)\n                    ptr := add(selfptr, sub(selflen, needlelen))\n                    loop:\n                    jumpi(ret, eq(and(mload(ptr), mask), needledata))\n                    ptr := sub(ptr, 1)\n                    jumpi(loop, gt(add(ptr, 1), selfptr))\n                    ptr := selfptr\n                    jump(exit)\n                    ret:\n                    ptr := add(ptr, needlelen)\n                    exit:\n                }\n                return ptr;\n            } else {\n                // For long needles, use hashing\n                bytes32 hash;\n                assembly { hash := sha3(needleptr, needlelen) }\n                ptr = selfptr + (selflen - needlelen);\n                while (ptr >= selfptr) {\n                    bytes32 testHash;\n                    assembly { testHash := sha3(ptr, needlelen) }\n                    if (hash == testHash)\n                        return ptr + needlelen;\n                    ptr -= 1;\n                }\n            }\n        }\n        return selfptr;\n    }\n\n    /*\n     * @dev Modifies `self` to contain everything from the first occurrence of\n     *      `needle` to the end of the slice. `self` is set to the empty slice\n     *      if `needle` is not found.\n     * @param self The slice to search and modify.\n     * @param needle The text to search for.\n     * @return `self`.\n     */\n    function find(slice self, slice needle) internal returns (slice) {\n        uint ptr = findPtr(self._len, self._ptr, needle._len, needle._ptr);\n        self._len -= ptr - self._ptr;\n        self._ptr = ptr;\n        return self;\n    }\n\n    /*\n     * @dev Modifies `self` to contain the part of the string from the start of\n     *      `self` to the end of the first occurrence of `needle`. If `needle`\n     *      is not found, `self` is set to the empty slice.\n     * @param self The slice to search and modify.\n     * @param needle The text to search for.\n     * @return `self`.\n     */\n    function rfind(slice self, slice needle) internal returns (slice) {\n        uint ptr = rfindPtr(self._len, self._ptr, needle._len, needle._ptr);\n        self._len = ptr - self._ptr;\n        return self;\n    }\n\n    /*\n     * @dev Splits the slice, setting `self` to everything after the first\n     *      occurrence of `needle`, and `token` to everything before it. If\n     *      `needle` does not occur in `self`, `self` is set to the empty slice,\n     *      and `token` is set to the entirety of `self`.\n     * @param self The slice to split.\n     * @param needle The text to search for in `self`.\n     * @param token An output parameter to which the first token is written.\n     * @return `token`.\n     */\n    function split(slice self, slice needle, slice token) internal returns (slice) {\n        uint ptr = findPtr(self._len, self._ptr, needle._len, needle._ptr);\n        token._ptr = self._ptr;\n        token._len = ptr - self._ptr;\n        if (ptr == self._ptr + self._len) {\n            // Not found\n            self._len = 0;\n        } else {\n            self._len -= token._len + needle._len;\n            self._ptr = ptr + needle._len;\n        }\n        return token;\n    }\n\n    /*\n     * @dev Splits the slice, setting `self` to everything after the first\n     *      occurrence of `needle`, and returning everything before it. If\n     *      `needle` does not occur in `self`, `self` is set to the empty slice,\n     *      and the entirety of `self` is returned.\n     * @param self The slice to split.\n     * @param needle The text to search for in `self`.\n     * @return The part of `self` up to the first occurrence of `delim`.\n     */\n    function split(slice self, slice needle) internal returns (slice token) {\n        split(self, needle, token);\n    }\n\n    /*\n     * @dev Splits the slice, setting `self` to everything before the last\n     *      occurrence of `needle`, and `token` to everything after it. If\n     *      `needle` does not occur in `self`, `self` is set to the empty slice,\n     *      and `token` is set to the entirety of `self`.\n     * @param self The slice to split.\n     * @param needle The text to search for in `self`.\n     * @param token An output parameter to which the first token is written.\n     * @return `token`.\n     */\n    function rsplit(slice self, slice needle, slice token) internal returns (slice) {\n        uint ptr = rfindPtr(self._len, self._ptr, needle._len, needle._ptr);\n        token._ptr = ptr;\n        token._len = self._len - (ptr - self._ptr);\n        if (ptr == self._ptr) {\n            // Not found\n            self._len = 0;\n        } else {\n            self._len -= token._len + needle._len;\n        }\n        return token;\n    }\n\n    /*\n     * @dev Splits the slice, setting `self` to everything before the last\n     *      occurrence of `needle`, and returning everything after it. If\n     *      `needle` does not occur in `self`, `self` is set to the empty slice,\n     *      and the entirety of `self` is returned.\n     * @param self The slice to split.\n     * @param needle The text to search for in `self`.\n     * @return The part of `self` after the last occurrence of `delim`.\n     */\n    function rsplit(slice self, slice needle) internal returns (slice token) {\n        rsplit(self, needle, token);\n    }\n\n    /*\n     * @dev Counts the number of nonoverlapping occurrences of `needle` in `self`.\n     * @param self The slice to search.\n     * @param needle The text to search for in `self`.\n     * @return The number of occurrences of `needle` found in `self`.\n     */\n    function count(slice self, slice needle) internal returns (uint cnt) {\n        uint ptr = findPtr(self._len, self._ptr, needle._len, needle._ptr) + needle._len;\n        while (ptr <= self._ptr + self._len) {\n            cnt++;\n            ptr = findPtr(self._len - (ptr - self._ptr), ptr, needle._len, needle._ptr) + needle._len;\n        }\n    }\n\n    /*\n     * @dev Returns True if `self` contains `needle`.\n     * @param self The slice to search.\n     * @param needle The text to search for in `self`.\n     * @return True if `needle` is found in `self`, false otherwise.\n     */\n    function contains(slice self, slice needle) internal returns (bool) {\n        return rfindPtr(self._len, self._ptr, needle._len, needle._ptr) != self._ptr;\n    }\n\n    /*\n     * @dev Returns a newly allocated string containing the concatenation of\n     *      `self` and `other`.\n     * @param self The first slice to concatenate.\n     * @param other The second slice to concatenate.\n     * @return The concatenation of the two strings.\n     */\n    function concat(slice self, slice other) internal returns (string) {\n        var ret = new string(self._len + other._len);\n        uint retptr;\n        assembly { retptr := add(ret, 32) }\n        memcpy(retptr, self._ptr, self._len);\n        memcpy(retptr + self._len, other._ptr, other._len);\n        return ret;\n    }\n\n    /*\n     * @dev Joins an array of slices, using `self` as a delimiter, returning a\n     *      newly allocated string.\n     * @param self The delimiter to use.\n     * @param parts A list of slices to join.\n     * @return A newly allocated string containing all the slices in `parts`,\n     *         joined with `self`.\n     */\n    function join(slice self, slice[] parts) internal returns (string) {\n        if (parts.length == 0)\n            return \"\";\n\n        uint length = self._len * (parts.length - 1);\n        for(uint i = 0; i < parts.length; i++)\n            length += parts[i]._len;\n\n        var ret = new string(length);\n        uint retptr;\n        assembly { retptr := add(ret, 32) }\n\n        for(i = 0; i < parts.length; i++) {\n            memcpy(retptr, parts[i]._ptr, parts[i]._len);\n            retptr += parts[i]._len;\n            if (i < parts.length - 1) {\n                memcpy(retptr, self._ptr, self._len);\n                retptr += self._len;\n            }\n        }\n\n        return ret;\n    }\n}",
@@ -908,7 +908,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 1281,
@@ -917,7 +917,7 @@
                     "src": "2850:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -942,7 +942,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -953,7 +953,7 @@
                     "src": "2881:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -2811,7 +2811,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -2822,7 +2822,7 @@
                     "src": "4341:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -2972,7 +2972,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -2983,7 +2983,7 @@
                     "src": "4862:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -3008,7 +3008,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -3019,7 +3019,7 @@
                     "src": "4892:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -3056,7 +3056,7 @@
                       "storageLocation": "default",
                       "typeDescriptions": {
                         "typeIdentifier": "t_string_memory_ptr",
-                        "typeString": "string memory"
+                        "typeString": "string"
                       },
                       "typeName": null,
                       "value": null,
@@ -3122,7 +3122,7 @@
                         "src": "5202:6:5",
                         "typeDescriptions": {
                           "typeIdentifier": "t_string_storage_ptr",
-                          "typeString": "string storage pointer"
+                          "typeString": "string"
                         }
                       }
                     },
@@ -3368,7 +3368,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -3379,7 +3379,7 @@
                     "src": "5140:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -3404,7 +3404,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 1452,
@@ -3413,7 +3413,7 @@
                     "src": "5170:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -4466,7 +4466,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -4477,7 +4477,7 @@
                     "src": "5762:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -4629,7 +4629,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -4640,7 +4640,7 @@
                     "src": "6635:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -6216,7 +6216,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -6227,7 +6227,7 @@
                     "src": "7154:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -6244,7 +6244,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -6255,7 +6255,7 @@
                     "src": "7166:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -6444,7 +6444,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -6455,7 +6455,7 @@
                     "src": "8255:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -6472,7 +6472,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -6483,7 +6483,7 @@
                     "src": "8267:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -7820,7 +7820,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -7831,7 +7831,7 @@
                     "src": "8664:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -7848,7 +7848,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -7859,7 +7859,7 @@
                     "src": "8676:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -7884,7 +7884,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -7895,7 +7895,7 @@
                     "src": "8706:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -8015,7 +8015,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -8026,7 +8026,7 @@
                     "src": "9783:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -8051,7 +8051,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -8062,7 +8062,7 @@
                     "src": "9813:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -9949,7 +9949,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -9960,7 +9960,7 @@
                     "src": "10069:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -10075,7 +10075,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -10086,7 +10086,7 @@
                     "src": "11288:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -10492,7 +10492,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -10503,7 +10503,7 @@
                     "src": "11700:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -10520,7 +10520,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -10531,7 +10531,7 @@
                     "src": "11712:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -11109,7 +11109,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -11120,7 +11120,7 @@
                     "src": "12494:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -11137,7 +11137,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -11148,7 +11148,7 @@
                     "src": "12506:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -11173,7 +11173,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -11184,7 +11184,7 @@
                     "src": "12538:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -11692,7 +11692,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -11703,7 +11703,7 @@
                     "src": "13371:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -11720,7 +11720,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -11731,7 +11731,7 @@
                     "src": "13383:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -12367,7 +12367,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -12378,7 +12378,7 @@
                     "src": "14165:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -12395,7 +12395,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -12406,7 +12406,7 @@
                     "src": "14177:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -12431,7 +12431,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -12442,7 +12442,7 @@
                     "src": "14209:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -13696,6 +13696,15 @@
                             {
                               "externalReferences": [
                                 {
+                                  "hash": {
+                                    "declaration": 2273,
+                                    "isOffset": false,
+                                    "isSlot": false,
+                                    "src": "17523:4:5",
+                                    "valueSize": 1
+                                  }
+                                },
+                                {
                                   "needleptr": {
                                     "declaration": 2254,
                                     "isOffset": false,
@@ -13710,15 +13719,6 @@
                                     "isOffset": false,
                                     "isSlot": false,
                                     "src": "17547:9:5",
-                                    "valueSize": 1
-                                  }
-                                },
-                                {
-                                  "hash": {
-                                    "declaration": 2273,
-                                    "isOffset": false,
-                                    "isSlot": false,
-                                    "src": "17523:4:5",
                                     "valueSize": 1
                                   }
                                 }
@@ -14924,7 +14924,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -14935,7 +14935,7 @@
                     "src": "18301:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -14952,7 +14952,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -14963,7 +14963,7 @@
                     "src": "18313:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -14988,7 +14988,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -14999,7 +14999,7 @@
                     "src": "18345:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -15374,7 +15374,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -15385,7 +15385,7 @@
                     "src": "18893:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -15402,7 +15402,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -15413,7 +15413,7 @@
                     "src": "18905:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -15438,7 +15438,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -15449,7 +15449,7 @@
                     "src": "18937:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -16333,7 +16333,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -16344,7 +16344,7 @@
                     "src": "19607:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -16361,7 +16361,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -16372,7 +16372,7 @@
                     "src": "19619:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -16389,7 +16389,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -16400,7 +16400,7 @@
                     "src": "19633:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -16425,7 +16425,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -16436,7 +16436,7 @@
                     "src": "19664:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -16573,7 +16573,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -16584,7 +16584,7 @@
                     "src": "20549:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -16601,7 +16601,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -16612,7 +16612,7 @@
                     "src": "20561:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -16637,7 +16637,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -16648,7 +16648,7 @@
                     "src": "20593:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -17423,7 +17423,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -17434,7 +17434,7 @@
                     "src": "21170:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -17451,7 +17451,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -17462,7 +17462,7 @@
                     "src": "21182:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -17479,7 +17479,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -17490,7 +17490,7 @@
                     "src": "21196:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -17515,7 +17515,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -17526,7 +17526,7 @@
                     "src": "21227:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -17663,7 +17663,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -17674,7 +17674,7 @@
                     "src": "22065:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -17691,7 +17691,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -17702,7 +17702,7 @@
                     "src": "22077:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -17727,7 +17727,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -17738,7 +17738,7 @@
                     "src": "22109:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -18513,7 +18513,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -18524,7 +18524,7 @@
                     "src": "22450:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -18541,7 +18541,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -18552,7 +18552,7 @@
                     "src": "22462:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -18850,7 +18850,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -18861,7 +18861,7 @@
                     "src": "23037:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -18878,7 +18878,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -18889,7 +18889,7 @@
                     "src": "23049:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -18960,7 +18960,7 @@
                       "storageLocation": "default",
                       "typeDescriptions": {
                         "typeIdentifier": "t_string_memory_ptr",
-                        "typeString": "string memory"
+                        "typeString": "string"
                       },
                       "typeName": null,
                       "value": null,
@@ -19074,7 +19074,7 @@
                         "src": "23558:6:5",
                         "typeDescriptions": {
                           "typeIdentifier": "t_string_storage_ptr",
-                          "typeString": "string storage pointer"
+                          "typeString": "string"
                         }
                       }
                     },
@@ -19488,7 +19488,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -19499,7 +19499,7 @@
                     "src": "23483:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -19516,7 +19516,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -19527,7 +19527,7 @@
                     "src": "23495:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -19552,7 +19552,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 2655,
@@ -19561,7 +19561,7 @@
                     "src": "23526:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -20104,7 +20104,7 @@
                       "storageLocation": "default",
                       "typeDescriptions": {
                         "typeIdentifier": "t_string_memory_ptr",
-                        "typeString": "string memory"
+                        "typeString": "string"
                       },
                       "typeName": null,
                       "value": null,
@@ -20154,7 +20154,7 @@
                         "src": "24407:6:5",
                         "typeDescriptions": {
                           "typeIdentifier": "t_string_storage_ptr",
-                          "typeString": "string storage pointer"
+                          "typeString": "string"
                         }
                       }
                     },
@@ -20994,7 +20994,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -21005,7 +21005,7 @@
                     "src": "24136:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -21022,7 +21022,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_array$_t_struct$_slice_$1240_memory_$dyn_memory_ptr",
-                    "typeString": "struct strings.slice memory[] memory"
+                    "typeString": "struct strings.slice[]"
                   },
                   "typeName": {
                     "baseType": {
@@ -21034,7 +21034,7 @@
                       "src": "24148:5:5",
                       "typeDescriptions": {
                         "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                        "typeString": "struct strings.slice storage pointer"
+                        "typeString": "struct strings.slice"
                       }
                     },
                     "id": 2698,
@@ -21043,7 +21043,7 @@
                     "src": "24148:7:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_array$_t_struct$_slice_$1240_storage_$dyn_storage_ptr",
-                      "typeString": "struct strings.slice storage ref[] storage pointer"
+                      "typeString": "struct strings.slice[]"
                     }
                   },
                   "value": null,
@@ -21068,7 +21068,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 2701,
@@ -21077,7 +21077,7 @@
                     "src": "24181:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -22000,7 +22000,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 1281,
@@ -22009,7 +22009,7 @@
                     "src": "2850:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -22034,7 +22034,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -22045,7 +22045,7 @@
                     "src": "2881:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -23903,7 +23903,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -23914,7 +23914,7 @@
                     "src": "4341:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -24064,7 +24064,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -24075,7 +24075,7 @@
                     "src": "4862:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -24100,7 +24100,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -24111,7 +24111,7 @@
                     "src": "4892:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -24148,7 +24148,7 @@
                       "storageLocation": "default",
                       "typeDescriptions": {
                         "typeIdentifier": "t_string_memory_ptr",
-                        "typeString": "string memory"
+                        "typeString": "string"
                       },
                       "typeName": null,
                       "value": null,
@@ -24214,7 +24214,7 @@
                         "src": "5202:6:5",
                         "typeDescriptions": {
                           "typeIdentifier": "t_string_storage_ptr",
-                          "typeString": "string storage pointer"
+                          "typeString": "string"
                         }
                       }
                     },
@@ -24460,7 +24460,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -24471,7 +24471,7 @@
                     "src": "5140:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -24496,7 +24496,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 1452,
@@ -24505,7 +24505,7 @@
                     "src": "5170:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -25558,7 +25558,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -25569,7 +25569,7 @@
                     "src": "5762:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -25721,7 +25721,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -25732,7 +25732,7 @@
                     "src": "6635:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -27308,7 +27308,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -27319,7 +27319,7 @@
                     "src": "7154:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -27336,7 +27336,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -27347,7 +27347,7 @@
                     "src": "7166:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -27536,7 +27536,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -27547,7 +27547,7 @@
                     "src": "8255:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -27564,7 +27564,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -27575,7 +27575,7 @@
                     "src": "8267:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -28912,7 +28912,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -28923,7 +28923,7 @@
                     "src": "8664:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -28940,7 +28940,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -28951,7 +28951,7 @@
                     "src": "8676:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -28976,7 +28976,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -28987,7 +28987,7 @@
                     "src": "8706:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -29107,7 +29107,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -29118,7 +29118,7 @@
                     "src": "9783:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -29143,7 +29143,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -29154,7 +29154,7 @@
                     "src": "9813:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -31041,7 +31041,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -31052,7 +31052,7 @@
                     "src": "10069:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -31167,7 +31167,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -31178,7 +31178,7 @@
                     "src": "11288:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -31584,7 +31584,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -31595,7 +31595,7 @@
                     "src": "11700:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -31612,7 +31612,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -31623,7 +31623,7 @@
                     "src": "11712:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -32201,7 +32201,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -32212,7 +32212,7 @@
                     "src": "12494:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -32229,7 +32229,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -32240,7 +32240,7 @@
                     "src": "12506:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -32265,7 +32265,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -32276,7 +32276,7 @@
                     "src": "12538:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -32784,7 +32784,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -32795,7 +32795,7 @@
                     "src": "13371:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -32812,7 +32812,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -32823,7 +32823,7 @@
                     "src": "13383:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -33459,7 +33459,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -33470,7 +33470,7 @@
                     "src": "14165:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -33487,7 +33487,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -33498,7 +33498,7 @@
                     "src": "14177:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -33523,7 +33523,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -33534,7 +33534,7 @@
                     "src": "14209:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -34788,6 +34788,15 @@
                             {
                               "externalReferences": [
                                 {
+                                  "hash": {
+                                    "declaration": 2273,
+                                    "isOffset": false,
+                                    "isSlot": false,
+                                    "src": "17523:4:5",
+                                    "valueSize": 1
+                                  }
+                                },
+                                {
                                   "needleptr": {
                                     "declaration": 2254,
                                     "isOffset": false,
@@ -34802,15 +34811,6 @@
                                     "isOffset": false,
                                     "isSlot": false,
                                     "src": "17547:9:5",
-                                    "valueSize": 1
-                                  }
-                                },
-                                {
-                                  "hash": {
-                                    "declaration": 2273,
-                                    "isOffset": false,
-                                    "isSlot": false,
-                                    "src": "17523:4:5",
                                     "valueSize": 1
                                   }
                                 }
@@ -36016,7 +36016,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -36027,7 +36027,7 @@
                     "src": "18301:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -36044,7 +36044,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -36055,7 +36055,7 @@
                     "src": "18313:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -36080,7 +36080,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -36091,7 +36091,7 @@
                     "src": "18345:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -36466,7 +36466,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -36477,7 +36477,7 @@
                     "src": "18893:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -36494,7 +36494,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -36505,7 +36505,7 @@
                     "src": "18905:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -36530,7 +36530,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -36541,7 +36541,7 @@
                     "src": "18937:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -37425,7 +37425,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -37436,7 +37436,7 @@
                     "src": "19607:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -37453,7 +37453,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -37464,7 +37464,7 @@
                     "src": "19619:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -37481,7 +37481,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -37492,7 +37492,7 @@
                     "src": "19633:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -37517,7 +37517,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -37528,7 +37528,7 @@
                     "src": "19664:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -37665,7 +37665,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -37676,7 +37676,7 @@
                     "src": "20549:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -37693,7 +37693,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -37704,7 +37704,7 @@
                     "src": "20561:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -37729,7 +37729,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -37740,7 +37740,7 @@
                     "src": "20593:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -38515,7 +38515,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -38526,7 +38526,7 @@
                     "src": "21170:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -38543,7 +38543,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -38554,7 +38554,7 @@
                     "src": "21182:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -38571,7 +38571,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -38582,7 +38582,7 @@
                     "src": "21196:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -38607,7 +38607,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -38618,7 +38618,7 @@
                     "src": "21227:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -38755,7 +38755,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -38766,7 +38766,7 @@
                     "src": "22065:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -38783,7 +38783,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -38794,7 +38794,7 @@
                     "src": "22077:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -38819,7 +38819,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -38830,7 +38830,7 @@
                     "src": "22109:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -39605,7 +39605,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -39616,7 +39616,7 @@
                     "src": "22450:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -39633,7 +39633,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -39644,7 +39644,7 @@
                     "src": "22462:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -39942,7 +39942,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -39953,7 +39953,7 @@
                     "src": "23037:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -39970,7 +39970,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -39981,7 +39981,7 @@
                     "src": "23049:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -40052,7 +40052,7 @@
                       "storageLocation": "default",
                       "typeDescriptions": {
                         "typeIdentifier": "t_string_memory_ptr",
-                        "typeString": "string memory"
+                        "typeString": "string"
                       },
                       "typeName": null,
                       "value": null,
@@ -40166,7 +40166,7 @@
                         "src": "23558:6:5",
                         "typeDescriptions": {
                           "typeIdentifier": "t_string_storage_ptr",
-                          "typeString": "string storage pointer"
+                          "typeString": "string"
                         }
                       }
                     },
@@ -40580,7 +40580,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -40591,7 +40591,7 @@
                     "src": "23483:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -40608,7 +40608,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -40619,7 +40619,7 @@
                     "src": "23495:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -40644,7 +40644,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 2655,
@@ -40653,7 +40653,7 @@
                     "src": "23526:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -41196,7 +41196,7 @@
                       "storageLocation": "default",
                       "typeDescriptions": {
                         "typeIdentifier": "t_string_memory_ptr",
-                        "typeString": "string memory"
+                        "typeString": "string"
                       },
                       "typeName": null,
                       "value": null,
@@ -41246,7 +41246,7 @@
                         "src": "24407:6:5",
                         "typeDescriptions": {
                           "typeIdentifier": "t_string_storage_ptr",
-                          "typeString": "string storage pointer"
+                          "typeString": "string"
                         }
                       }
                     },
@@ -42086,7 +42086,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_struct$_slice_$1240_memory_ptr",
-                    "typeString": "struct strings.slice memory"
+                    "typeString": "struct strings.slice"
                   },
                   "typeName": {
                     "contractScope": null,
@@ -42097,7 +42097,7 @@
                     "src": "24136:5:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                      "typeString": "struct strings.slice storage pointer"
+                      "typeString": "struct strings.slice"
                     }
                   },
                   "value": null,
@@ -42114,7 +42114,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_array$_t_struct$_slice_$1240_memory_$dyn_memory_ptr",
-                    "typeString": "struct strings.slice memory[] memory"
+                    "typeString": "struct strings.slice[]"
                   },
                   "typeName": {
                     "baseType": {
@@ -42126,7 +42126,7 @@
                       "src": "24148:5:5",
                       "typeDescriptions": {
                         "typeIdentifier": "t_struct$_slice_$1240_storage_ptr",
-                        "typeString": "struct strings.slice storage pointer"
+                        "typeString": "struct strings.slice"
                       }
                     },
                     "id": 2698,
@@ -42135,7 +42135,7 @@
                     "src": "24148:7:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_array$_t_struct$_slice_$1240_storage_$dyn_storage_ptr",
-                      "typeString": "struct strings.slice storage ref[] storage pointer"
+                      "typeString": "struct strings.slice[]"
                     }
                   },
                   "value": null,
@@ -42160,7 +42160,7 @@
                   "storageLocation": "default",
                   "typeDescriptions": {
                     "typeIdentifier": "t_string_memory_ptr",
-                    "typeString": "string memory"
+                    "typeString": "string"
                   },
                   "typeName": {
                     "id": 2701,
@@ -42169,7 +42169,7 @@
                     "src": "24181:6:5",
                     "typeDescriptions": {
                       "typeIdentifier": "t_string_storage_ptr",
-                      "typeString": "string storage pointer"
+                      "typeString": "string"
                     }
                   },
                   "value": null,
@@ -42193,9 +42193,9 @@
   },
   "compiler": {
     "name": "solc",
-    "version": "0.4.21+commit.dfe3193c.Emscripten.clang"
+    "version": "0.4.24+commit.e67f0147.Emscripten.clang"
   },
   "networks": {},
   "schemaVersion": "2.0.0",
-  "updatedAt": "2018-05-28T15:36:01.116Z"
+  "updatedAt": "2018-05-31T17:15:42.266Z"
 }

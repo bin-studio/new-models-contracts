@@ -8,12 +8,12 @@ pragma experimental ABIEncoderV2;
 import "./Metadata.sol";
 import "zeppelin-solidity/contracts/token/ERC20/ERC20.sol";
 
-import "./IBadges.sol";
+import "./IPatches.sol";
 import "zeppelin-solidity/contracts/token/ERC721/ERC721Token.sol";
 import "zeppelin-solidity/contracts/ownership/Ownable.sol";
 
 
-contract Badges is IBadges, ERC721Token, Ownable {
+contract Patches is IPatches, ERC721Token, Ownable {
 
 
    modifier onlyOwnerOrController() {
@@ -37,7 +37,7 @@ contract Badges is IBadges, ERC721Token, Ownable {
 
     mapping(uint => Work) works;
 
-    function Badges (string name, string symbol) public
+    function Patches (string name, string symbol) public
         ERC721Token(name, symbol)
     { }
 

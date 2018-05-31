@@ -1,13 +1,13 @@
 pragma solidity ^0.4.18;
 
 /**
- * Interface for the Digital Asset Registry for the Non Fungible Token Badges
+ * Interface for the Digital Asset Registry for the Non Fungible Token Patches
  **/
 
 
 import "zeppelin-solidity/contracts/token/ERC721/ERC721.sol";
 
-contract IBadges is ERC721 {
+contract IPatches is ERC721 {
 
     function implementation() public view returns (address);
 
