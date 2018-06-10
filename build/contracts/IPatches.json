@@ -710,9 +710,9 @@
   "sourceMap": "",
   "deployedSourceMap": "",
   "source": "pragma solidity ^0.4.18;\n\n/**\n * Interface for the Digital Asset Registry for the Non Fungible Token Patches\n **/\n\n\nimport \"zeppelin-solidity/contracts/token/ERC721/ERC721.sol\";\n\ncontract IPatches is ERC721 {\n\n    function implementation() public view returns (address);\n\n    function tokenURI(uint _tokenId) public view returns (string _infoUrl);\n\n    function getWorkFromToken(uint _tokenId) public pure returns (uint);\n\n    function getController() public constant returns (address);\n    function getMetadata() public constant returns (address);\n    function getWallet() public constant returns (address);\n    function getBilly() public constant returns (address);\n\n    function workExists(uint _workId) public constant returns (bool);\n    function workArtist(uint _workId) public constant returns (address);\n    function workSold(uint _workId) public constant returns (uint);\n\n/* ---------------------------------------------------------------------------------------------------------------------- */\n\n    function moveEth(address _to, uint256 amount) public returns (bool);\n    function moveToken(uint256 amount, address _to, address token) public returns (bool);\n    function approveToken(uint256 amount, address _to, address token) public returns (bool);\n    \n    function updateArtistAddress(uint _workId, address _artist) public;\n    function updateWalletAddress(address _wallet) public;\n    function updateBillyAddress(address _billy) public;\n    function updateControllerAddress(address _controller) public;\n    function updateMetadataAddress(address _metadata) public;\n\n    function mint (address _to, uint256 _tokenId) public;\n    function unmint (uint256 _tokenId) public ;\n\n}\n",
-  "sourcePath": "/Users/billy/sol/new-models/contracts/IPatches.sol",
+  "sourcePath": "/Users/billy/sol/new-models-contracts/contracts/IPatches.sol",
   "ast": {
-    "absolutePath": "/Users/billy/sol/new-models/contracts/IPatches.sol",
+    "absolutePath": "/Users/billy/sol/new-models-contracts/contracts/IPatches.sol",
     "exportedSymbols": {
       "IPatches": [
         562
@@ -2310,7 +2310,7 @@
     "src": "0:1692:1"
   },
   "legacyAST": {
-    "absolutePath": "/Users/billy/sol/new-models/contracts/IPatches.sol",
+    "absolutePath": "/Users/billy/sol/new-models-contracts/contracts/IPatches.sol",
     "exportedSymbols": {
       "IPatches": [
         562
@@ -3913,5 +3913,5 @@
   },
   "networks": {},
   "schemaVersion": "2.0.0",
-  "updatedAt": "2018-05-31T17:15:42.260Z"
+  "updatedAt": "2018-06-10T19:09:26.109Z"
 }
