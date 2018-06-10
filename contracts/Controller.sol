@@ -47,7 +47,7 @@ contract Controller is Ownable {
         require(edition <= editionSize);
         uint price = getPrice(_workId); // reverts if tokenId is out of range
         require(msg.value >= price);
-        uint _tokenId = _workId.mul(100).add(edition);
+        uint _tokenId = _workId.sub(1).mul(100).add(edition);
 
         patches.transfer(price);
         if (msg.value > price) {
@@ -62,19 +62,19 @@ contract Controller is Ownable {
     function reserved(uint _workId) public returns (bool) {
         // sender is artist of work // 3 works
         for (uint i = 1; i < 4; i++) {
-            if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
+            if (!IPatches(patches).exists(_workId.sub(1).mul(100).add(i))) {
                 IPatches(patches).mint(IPatches(patches).workArtist(_workId), _workId.mul(100).add(i));
             }
         }
         // sender is programmer Billy // 2 works
         for (i = 4; i < 6; i++) {
-            if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
+            if (!IPatches(patches).exists(_workId.sub(1).mul(100).add(i))) {
                 IPatches(patches).mint(IPatches(patches).getBilly(), _workId.mul(100).add(i));
             }
         }
         // sender is new models // 5 works
         for (i = 6; i < 11; i++) {
-            if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
+            if (!IPatches(patches).exists(_workId.sub(1).mul(100).add(i))) {
                 IPatches(patches).mint(IPatches(patches).getWallet(), _workId.mul(100).add(i));
             }
         }
