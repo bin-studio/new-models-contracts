@@ -63,7 +63,7 @@ contract Patches is IPatches, ERC721Token, Ownable {
 
     function getWorkFromToken(uint _tokenId) public pure returns (uint) {
         _tokenId = _tokenId.sub(1);
-        return (_tokenId.sub(_tokenId % 100)).div(100);
+        return (_tokenId.sub(_tokenId % 100)).div(100).add(1);
     }
 
     function getController() public constant returns (address) {
@@ -91,6 +91,8 @@ contract Patches is IPatches, ERC721Token, Ownable {
 /* ---------------------------------------------------------------------------------------------------------------------- */
 
     function addWork(uint _workId, address _artist) public onlyOwnerOrController returns (bool) {
+        require(_workId != 0);
+        require(works[_workId.sub(1)].exists || _workId == 1);
         require(!works[_workId].exists);
         works[_workId].exists = true;
         works[_workId].artist = _artist;

@@ -59,27 +59,23 @@ contract Controller is Ownable {
         return true;
     }
 
-    function reserved(address _to, uint _workId) public returns (bool) {
-        if (_to == IPatches(patches).workArtist(_workId)) {
-            // sender is artist of work // 3 works
-            for (uint i = 1; i < 4; i++) {
-                if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
-                    IPatches(patches).mint(_to, _workId.mul(100).add(i));
-                }
+    function reserved(uint _workId) public returns (bool) {
+        // sender is artist of work // 3 works
+        for (uint i = 1; i < 4; i++) {
+            if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
+                IPatches(patches).mint(IPatches(patches).workArtist(_workId), _workId.mul(100).add(i));
             }
-        } else if (_to == IPatches(patches).getBilly()) {
-            // sender is programmer Billy // 2 works
-            for (i = 4; i < 6; i++) {
-                if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
-                    IPatches(patches).mint(_to, _workId.mul(100).add(i));
-                }
+        }
+        // sender is programmer Billy // 2 works
+        for (i = 4; i < 6; i++) {
+            if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
+                IPatches(patches).mint(IPatches(patches).getBilly(), _workId.mul(100).add(i));
             }
-        } else if (_to == IPatches(patches).getWallet()) {
-            // sender is new models // 5 works
-            for (i = 6; i < 11; i++) {
-                if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
-                    IPatches(patches).mint(_to, _workId.mul(100).add(i));
-                }
+        }
+        // sender is new models // 5 works
+        for (i = 6; i < 11; i++) {
+            if (!IPatches(patches).exists(_workId.mul(100).add(i))) {
+                IPatches(patches).mint(IPatches(patches).getWallet(), _workId.mul(100).add(i));
             }
         }
     }
