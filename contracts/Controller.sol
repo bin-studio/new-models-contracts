@@ -61,21 +61,25 @@ contract Controller is Ownable {
 
     function reserved(uint _workId) public returns (bool) {
         // sender is artist of work // 3 works
+        uint patchId;
         for (uint i = 1; i < 4; i++) {
-            if (!IPatches(patches).exists(_workId.sub(1).mul(100).add(i))) {
-                IPatches(patches).mint(IPatches(patches).workArtist(_workId), _workId.mul(100).add(i));
+            patchId = _workId.sub(1).mul(100).add(i);
+            if (!IPatches(patches).exists(patchId)) {
+                IPatches(patches).mint(IPatches(patches).workArtist(_workId), patchId);
             }
         }
         // sender is programmer Billy // 2 works
         for (i = 4; i < 6; i++) {
-            if (!IPatches(patches).exists(_workId.sub(1).mul(100).add(i))) {
-                IPatches(patches).mint(IPatches(patches).getBilly(), _workId.mul(100).add(i));
+            patchId = _workId.sub(1).mul(100).add(i);
+            if (!IPatches(patches).exists(patchId)) {
+                IPatches(patches).mint(IPatches(patches).getBilly(), patchId);
             }
         }
         // sender is new models // 5 works
         for (i = 6; i < 11; i++) {
-            if (!IPatches(patches).exists(_workId.sub(1).mul(100).add(i))) {
-                IPatches(patches).mint(IPatches(patches).getWallet(), _workId.mul(100).add(i));
+            patchId = _workId.sub(1).mul(100).add(i);
+            if (!IPatches(patches).exists(patchId)) {
+                IPatches(patches).mint(IPatches(patches).getWallet(), patchId);
             }
         }
     }

@@ -33,6 +33,7 @@ contract Patches is IPatches, ERC721Token, Ownable {
         bool exists;
         address artist;
         uint sold;
+        bytes32 hash;
     }
 
     mapping(uint => Work) works;
@@ -87,15 +88,22 @@ contract Patches is IPatches, ERC721Token, Ownable {
     function workSold(uint _workId) public constant returns (uint) {
         return works[_workId].sold;
     }
+    function workHash(uint _workId) public constant returns (bytes32) {
+        return works[_workId].hash;
+    }
+    function hashWork(string work) public constant returns (bytes32) {
+        return sha3(work);
+    }
 
 /* ---------------------------------------------------------------------------------------------------------------------- */
 
-    function addWork(uint _workId, address _artist) public onlyOwnerOrController returns (bool) {
+    function addWork(uint _workId, address _artist, bytes32 _hash) public onlyOwnerOrController returns (bool) {
         require(_workId != 0);
         require(works[_workId.sub(1)].exists || _workId == 1);
         require(!works[_workId].exists);
         works[_workId].exists = true;
         works[_workId].artist = _artist;
+        works[_workId].hash = _hash;
     }    
 
     function moveEth(address _to, uint256 amount) public onlyOwnerOrController returns (bool) {

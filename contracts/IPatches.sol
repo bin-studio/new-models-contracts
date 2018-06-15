@@ -23,8 +23,14 @@ contract IPatches is ERC721 {
     function workExists(uint _workId) public constant returns (bool);
     function workArtist(uint _workId) public constant returns (address);
     function workSold(uint _workId) public constant returns (uint);
+    function workHash(uint _workId) public constant returns (bytes32);
+
+    function hashWork(string work) public constant returns (bytes32);
 
 /* ---------------------------------------------------------------------------------------------------------------------- */
+
+
+    function addWork(uint _workId, address _artist, bytes32 _hash) public returns (bool);
 
     function moveEth(address _to, uint256 amount) public returns (bool);
     function moveToken(uint256 amount, address _to, address token) public returns (bool);
